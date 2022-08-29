@@ -186,6 +186,7 @@ defmodule Absinthe.Plug.GraphiQL do
   end
 
   @doc false
+  @spec call(Plug.Conn.t(), map) :: Plug.Conn.t()
   def call(conn, config) do
     case html?(conn) do
       true -> do_call(conn, config)
@@ -220,7 +221,21 @@ defmodule Absinthe.Plug.GraphiQL do
         conn_private: (conn.private[:absinthe] || %{}) |> Map.put(:http_method, conn.method)
       }
 
-      {conn, result} = Absinthe.Plug.run_request(request, conn, conn_info, config)
+      wrap_execution = Map.get(config, :wrap_execution)
+      require_wrapped_execution = Map.get(config, :require_wrapped_execution)
+
+      if require_wrapped_execution && is_nil(wrap_execution) do
+        raise ArgumentError, ":wrap_execution is required when :require_wrapped_execution is true"
+      end
+
+      {conn, result} =
+        if is_nil(wrap_execution) do
+          Absinthe.Plug.run_request(request, conn, conn_info, config)
+        else
+          wrap_execution.(conn, fn ->
+            Absinthe.Plug.run_request(request, conn, conn_info, config)
+          end)
+        end
 
       case result do
         {:ok, result} ->

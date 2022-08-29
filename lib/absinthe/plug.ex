@@ -194,7 +194,7 @@ defmodule Absinthe.Plug do
 
   See the documentation for the `Absinthe.Plug.opts` type for details on the available options.
   """
-  @spec init(opts :: opts) :: Plug.opts()
+  @spec init(opts :: opts) :: Plug.opts() | no_return()
   def init(opts) do
     adapter = Keyword.get(opts, :adapter, Absinthe.Adapter.LanguageConventions)
     context = Keyword.get(opts, :context, %{})
@@ -232,6 +232,15 @@ defmodule Absinthe.Plug do
 
     transport_batch_payload_key = Keyword.get(opts, :transport_batch_payload_key, true)
 
+    wrap_execution = Keyword.get(opts, :wrap_execution)
+    # to be extra safe, defaulting this to true, since for our use case, we
+    # always want to wrap execution for RLS
+    require_wrapped_execution = Keyword.get(opts, :require_wrapped_execution, true)
+
+    if require_wrapped_execution && is_nil(wrap_execution) do
+      raise ArgumentError, ":wrap_execution is required when :require_wrapped_execution is true"
+    end
+
     %{
       adapter: adapter,
       context: context,
@@ -241,6 +250,8 @@ defmodule Absinthe.Plug do
       pipeline: pipeline,
       raw_options: raw_options,
       schema_mod: schema_mod,
+      wrap_execution: wrap_execution,
+      require_wrapped_execution: require_wrapped_execution,
       serializer: serializer,
       content_type: content_type,
       log_level: log_level,
@@ -284,10 +295,18 @@ defmodule Absinthe.Plug do
   @doc """
   Parses, validates, resolves, and executes the given Graphql Document
   """
-  @spec call(Plug.Conn.t(), map) :: Plug.Conn.t() | no_return
+  @spec call(Plug.Conn.t(), map) :: Plug.Conn.t()
   def call(conn, config) do
     config = update_config(conn, config)
-    {conn, result} = conn |> execute(config)
+
+    wrap_execution = Map.get(config, :wrap_execution)
+
+    {conn, result} =
+      if is_nil(wrap_execution) do
+        conn |> execute(config)
+      else
+        wrap_execution.(conn, fn -> conn |> execute(config) end)
+      end
 
     case result do
       {:input_error, msg} ->
